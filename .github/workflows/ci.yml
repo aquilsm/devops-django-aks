@@ -7,8 +7,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write
-  actions: write
+  id-token: write   # REQUIRED for Workload Identity Federation
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -39,11 +38,11 @@ jobs:
 
       - name: Build Docker image
         run: |
-          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest"
-          # FIX: Added build context (.) at the end
-          docker build -t "$IMAGE_URI" .
+          docker build \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest \
+            .
 
       - name: Push Docker image
         run: |
-          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest"
-          docker push "$IMAGE_URI"
+          docker push \
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest
