@@ -1,48 +1,67 @@
-name: CI - Build & Push Docker Image
+name: CI - Build Image & Update GitOps
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 permissions:
-  contents: read
-  id-token: write   # REQUIRED for Workload Identity Federation
+  contents: write
+  id-token: write
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: us-central1
   REPOSITORY: django-repo
   IMAGE_NAME: django-app
+  GITOPS_REPO: aquilsm/devops-django-gitops
 
 jobs:
-  build-and-push:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout app repo
+      uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: github-actions-sa@devops-gke-github-ci.iam.gserviceaccount.com
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: github-actions-sa@devops-gke-github-ci.iam.gserviceaccount.com
 
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
+    - name: Setup gcloud
+      uses: google-github-actions/setup-gcloud@v2
 
-      - name: Configure Docker for Artifact Registry
-        run: |
-          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+    - name: Configure Docker
+      run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      - name: Build Docker image
-        run: |
-          docker build \
-            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest \
-            .
+    - name: Build & Push Docker image
+      run: |
+        IMAGE_TAG=${GITHUB_SHA}
+        IMAGE_URI=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:$IMAGE_TAG
 
-      - name: Push Docker image
-        run: |
-          docker push \
-            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest
+        docker build -t $IMAGE_URI .
+        docker push $IMAGE_URI
+
+        echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+
+    - name: Checkout GitOps repo
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ env.GITOPS_REPO }}
+        token: ${{ secrets.GITOPS_PAT }}
+        path: gitops
+
+    - name: Update image tag in GitOps repo
+      run: |
+        sed -i "s|image:.*django-app:.*|image: $IMAGE_URI|" \
+          gitops/apps/django/deployment.yaml
+
+    - name: Commit & push GitOps change
+      run: |
+        cd gitops
+        git config user.email "ci@github.com"
+        git config user.name "GitHub Actions"
+
+        git commit -am "Deploy image $GITHUB_SHA"
+        git push
